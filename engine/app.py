@@ -19,7 +19,7 @@ import json
 import os
 from dotenv import load_dotenv
 
-# Initialize the Flask app and enable CORS
+# Initializing
 app = Flask(__name__)
 CORS(app)
 
@@ -33,25 +33,24 @@ with open('sample_db.json', 'r') as f:
     sample_db = json.load(f)
 
 
-# Load the class names for document classification
 class_names = ['admit', 'college_id', 'result']  # 3 classes
 
 # Set device for PyTorch model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Load the EfficientNet model and adjust the classifier layer
+
 model = models.efficientnet_b0(pretrained=True)
 num_ftrs = model.classifier[1].in_features
-model.classifier[1] = nn.Linear(num_ftrs, len(class_names))  # Modify output layer to match the number of classes
-model.load_state_dict(torch.load('document_classifier.pth'))  # Ensure the model file is in the models directory
+model.classifier[1] = nn.Linear(num_ftrs, len(class_names))  
+model.load_state_dict(torch.load('document_classifier.pth'))  
 model = model.to(device)
-model.eval()  # Set model to evaluation mode
+model.eval() 
 
-# Constants for signature overlaying
+
 SIGNATURE_POSITION = [300, 500]
-SIGNATURE_SIZE = (200, 200)  # Desired size for the signature (width, height)
+SIGNATURE_SIZE = (200, 200) 
 
-# Helper function to download image from IPFS link
+# function to download image from IPFS link
 def download_image_from_ipfs(ipfs_link):
     ipfs_gateway = "https://ipfs.io/ipfs/"
     ipfs_hash = ipfs_link.split("ipfs://")[-1]
@@ -68,8 +67,7 @@ def overlay_signature(background_image, signature_path, position):
 
     if signature is None:
         raise FileNotFoundError(f"Signature image at path {signature_path} could not be loaded.")
-    
-    # Resize the signature image
+
     signature = cv2.resize(signature, SIGNATURE_SIZE, interpolation=cv2.INTER_AREA)
 
     signature_height, signature_width = signature.shape[:2]
@@ -78,7 +76,7 @@ def overlay_signature(background_image, signature_path, position):
     if (y < 0) or (x < 0) or (y + signature_height > background_image.shape[0]) or (x + signature_width > background_image.shape[1]):
         raise ValueError("Signature image does not fit in the background image at the specified position.")
 
-    if signature.shape[2] == 4:  # Check if the signature has an alpha channel
+    if signature.shape[2] == 4:  
         b, g, r, a = cv2.split(signature)
         overlay = cv2.merge((b, g, r))
         mask = a
@@ -96,7 +94,6 @@ def overlay_signature(background_image, signature_path, position):
 
     return buffer.tobytes()
 
-# Function to upload an image to IPFS
 def upload_to_ipfs(image_data):
     url = "https://api.pinata.cloud/pinning/pinFileToIPFS"
     headers = {
@@ -124,43 +121,32 @@ def process_image_ipfs():
     ipfs_link = data['ipfs_link']
     
     try:
-        # Convert IPFS link to image
         image = download_image_from_ipfs(ipfs_link)
         return process_image(image)
     
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Function to process the image with OCR and fuzzy matching
 def process_image(image):
-    # Perform OCR on the image using pytesseract
     extracted_text = pytesseract.image_to_string(image).lower()
 
-    print(extracted_text)
-
-    
-    # Define regular expression patterns for extracting fields from text
     name_pattern = r'name\s*:\s*[_\W]*([a-z\s]+)'
     roll_number_pattern = r'roll\s*no\s*:\s*(\d{8})'
     result_pattern = r'result\s*:\s*(\w+)'
     cpi_pattern = r'cpi\s*:\s*([\d.]+)'
     
-    # Extract fields using regex patterns defined above
     name = re.search(name_pattern, extracted_text).group(1).strip() if re.search(name_pattern, extracted_text) else "not found"
     roll_number = re.search(roll_number_pattern, extracted_text).group(1).strip() if re.search(roll_number_pattern, extracted_text) else "not found"
     result = re.search(result_pattern, extracted_text).group(1).strip() if re.search(result_pattern, extracted_text) else "not found"
     cpi = re.search(cpi_pattern, extracted_text).group(1).strip() if re.search(cpi_pattern, extracted_text) else "not found"
 
-    # Construct extracted data dictionary
     extracted_data = {"Name": name, "Roll Number": roll_number, "Result": result, "CPI": cpi}
 
     print(extracted_data)
 
-    # Check against the sample database for matches based on roll number
     db_entry = next((entry for entry in sample_db if entry["Roll Number"] == roll_number), None)
 
     if db_entry:
-        # Fuzzy matching of extracted fields with database entries
         name_match_score = fuzz.partial_ratio(name, db_entry["Name"])
         result_match_score = fuzz.partial_ratio(result, db_entry["Result"])
         cpi_match_score = fuzz.partial_ratio(cpi, db_entry["CPI"])
@@ -174,13 +160,12 @@ def process_image(image):
         print(fuzzy_results)
 
         if any(score < 85 for score in fuzzy_results.values()):
-            return jsonify({"Match Result": 0}), 200  # Not a match
+            return jsonify({"Match Result": 0}), 200  
         
-        return jsonify({"Match Result": 1}), 200  # Match found
+        return jsonify({"Match Result": 1}), 200 
     
     return jsonify({"error": "Roll Number not found in database"}), 404
 
-# Function to classify a document using a pre-trained model
 def classify_document(image):
     preprocess = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -201,10 +186,9 @@ def classify_document(image):
         
     return class_names[pred_idx.item()]  
 
-@app.route('/c/<auth_id>', methods=['GET', 'POST'])  # Updated route to include auth_id as a parameter
-def classify_ipfs(auth_id):  # Added auth_id as a parameter to the function
+@app.route('/c/<auth_id>', methods=['GET', 'POST']) 
+def classify_ipfs(auth_id): 
     if request.method == 'POST':
-        # Handle the POST request
         data = request.get_json()
         
         if not data or 'ipfs_link' not in data:
@@ -218,16 +202,15 @@ def classify_ipfs(auth_id):  # Added auth_id as a parameter to the function
             predicted_class = classify_document(image)
 
             if predicted_class:
-                # Prepare the document to be inserted
                 document = {
-                    "authid": auth_id,  # Use the auth_id from the route parameter
+                    "authid": auth_id, 
                     "ipfs_hash": ipfs_link,
-                    "upload_time": datetime.utcnow(),  # Use current time
-                    "doctype": predicted_class,  # Store the predicted class
-                    "verify_flag": False  # Set verify_flag to False
+                    "upload_time": datetime.utcnow(),  
+                    "doctype": predicted_class, 
+                    "verify_flag": False  
                 }
 
-                mongo.db.userDocuments.insert_one(document)  # Replace with your actual collection name
+                mongo.db.userDocuments.insert_one(document)
             
             return jsonify({"predicted_document_type": predicted_class}), 200
         
@@ -235,11 +218,9 @@ def classify_ipfs(auth_id):  # Added auth_id as a parameter to the function
             return jsonify({"error": str(e)}), 500
 
     elif request.method == 'GET':
-        # Handle the GET request
         try:
-            documents = list(mongo.db.userDocuments.find({"authid": auth_id}))  # Replace with your actual collection name
-            
-            # Convert ObjectId to string if needed
+            documents = list(mongo.db.userDocuments.find({"authid": auth_id})) 
+
             for doc in documents:
                 doc['_id'] = str(doc['_id'])
 
@@ -257,16 +238,12 @@ def overlay_signature_endpoint():
    signature_path = 'sign2.png' 
 
    try:
-       # Download the background image from IPFS.
        background_image_np_array=download_image_from_ipfs(background_ipfs_link)
-       
-       # Convert PIL Image to OpenCV format.
+
        background_image_cv=cv2.cvtColor(np.array(background_image_np_array), cv2.COLOR_RGB2BGR)
 
-       # Overlay the signature on the downloaded background image.
        image_data=overlay_signature(background_image_cv ,signature_path ,SIGNATURE_POSITION)
        
-       # Upload the final image to IPFS.
        ipfs_hash=upload_to_ipfs(image_data)
 
        result = mongo.db.userDocuments.update_one(
